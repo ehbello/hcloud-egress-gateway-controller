@@ -1,5 +1,7 @@
 # hcloud-egress-gateway-controller
 
+[![CI](https://github.com/maarlab-rethinking/hcloud-egress-gateway-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/maarlab-rethinking/hcloud-egress-gateway-controller/actions/workflows/ci.yml)
+
 Give selected Kubernetes pods a **stable, fixed egress source IP** — a set of
 **Hetzner Cloud floating IPs** — spread across the nodes where the controller's
 agents run, so upstream services that filter by source IP accept the traffic. No
