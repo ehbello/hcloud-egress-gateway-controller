@@ -1,0 +1,31 @@
+# Controller image (single binary; the agent StatefulSet the controller generates
+# reuses this same image in `agent` mode).
+image:
+  repository: ghcr.io/maarlab-rethinking/hcloud-egress-gateway-controller
+  tag: "" # defaults to .Chart.appVersion
+  pullPolicy: IfNotPresent
+
+# Hetzner Cloud API token. Provide via an existing Secret (recommended: ESO) with a
+# key `token`. The controller and the agents mount it.
+hcloud:
+  tokenSecretName: hcloud-egress-token
+  tokenSecretKey: token
+
+controller:
+  replicas: 1 # leader-elected
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 128Mi }
+
+# The agent StatefulSet is created at runtime by the controller (per CR); these are
+# the defaults it stamps onto the agent pods.
+agent:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 64Mi }
+  # keep agents off control-plane nodes; they can run on any worker
+  tolerations: []
+  nodeSelector: {}
+
+# Install the CRD with the chart (set false if managed separately).
+installCRD: true
