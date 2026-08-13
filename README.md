@@ -73,8 +73,9 @@ metadata:
 spec:
   backend: cilium            # or host-routing
   managed:
-    count: 2
-    homeLocation: fsn1
+    regions:                 # floating IPs per Hetzner location
+      - { location: fsn1, count: 1 }
+      - { location: nbg1, count: 1 }
     reclaimPolicy: Retain
   podSelector:
     matchLabels:
@@ -82,6 +83,18 @@ spec:
   # destinationCIDRs omitted => any destination (0.0.0.0/0), cluster-internal excluded
 ```
 A workload opts in by adding `egress-via: partner-api` to its pods.
+
+### Regions & locality
+A Hetzner floating IP only assigns to a server in its **home location**, so the
+controller runs one agent StatefulSet per region, pinned to that location's nodes
+(`topology.kubernetes.io/region`). List the locations where your workloads run under
+`managed.regions` so each has a fixed egress IP (BYO IPs are grouped by their
+API-reported location automatically). **Whitelist every address across all regions.**
+
+Note: Cilium's OSS egress gateway is **not topology-aware** — with one CR spanning
+several regions it distributes endpoints to gateway nodes by hash, not by locality, so
+a pod may egress via another region's gateway. For guaranteed same-region egress, use
+one CR per region with a region-scoped `podSelector` and region-affine workloads.
 
 ## Layout
 - `api/v1alpha1/` — the `HetznerEgressGateway` CRD types.

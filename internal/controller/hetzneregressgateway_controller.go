@@ -15,6 +15,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -72,12 +73,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	ips, err := r.resolveIPs(ctx, &heg)
+	regions, err := r.resolveIPs(ctx, &heg)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("resolve floating IPs: %w", err)
 	}
-	if err := r.ensureStatefulSet(ctx, &heg, ips); err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure statefulset: %w", err)
+	if err := r.ensureStatefulSets(ctx, &heg, regions); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure statefulsets: %w", err)
 	}
 	if err := r.ensureBackend(ctx, &heg); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure backend: %w", err)
@@ -86,41 +87,97 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	l.Info("reconciled", "floatingIPs", len(ips), "ready", heg.Status.ReadyGateways)
+	total := 0
+	for _, reg := range regions {
+		total += len(reg.ips)
+	}
+	l.Info("reconciled", "floatingIPs", total, "regions", len(regions), "ready", heg.Status.ReadyGateways)
 	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 }
 
-func (r *Reconciler) resolveIPs(ctx context.Context, heg *egressv1alpha1.HetznerEgressGateway) ([]hcloud.FloatingIP, error) {
+// regionIPs is a Hetzner location and the floating IPs homed there.
+type regionIPs struct {
+	location string
+	ips      []hcloud.FloatingIP
+}
+
+func (r *Reconciler) resolveIPs(ctx context.Context, heg *egressv1alpha1.HetznerEgressGateway) ([]regionIPs, error) {
 	if m := heg.Spec.Managed; m != nil {
-		out := make([]hcloud.FloatingIP, 0, m.Count)
-		for i := 0; i < m.Count; i++ {
-			fip, err := r.HCloud.EnsureManaged(ctx, heg.Name, i, m.HomeLocation, m.Type, m.Labels)
-			if err != nil {
-				return nil, err
+		out := make([]regionIPs, 0, len(m.Regions))
+		for _, reg := range m.Regions {
+			ri := regionIPs{location: reg.Location}
+			for i := 0; i < reg.Count; i++ {
+				fip, err := r.HCloud.EnsureManaged(ctx, heg.Name, reg.Location, i, m.Type, m.Labels)
+				if err != nil {
+					return nil, err
+				}
+				ri.ips = append(ri.ips, fip)
 			}
-			out = append(out, fip)
+			out = append(out, ri)
 		}
 		return out, nil
 	}
-	out := make([]hcloud.FloatingIP, 0, len(heg.Spec.FloatingIPs))
+	// BYO: adopt each address and group by its (API-discovered) home location so each
+	// region's agents can be pinned to nodes there.
+	byLoc := map[string]*regionIPs{}
+	var order []string
 	for _, addr := range heg.Spec.FloatingIPs {
 		fip, err := r.HCloud.GetByAddress(ctx, addr)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, fip)
+		loc := fip.Location
+		if _, ok := byLoc[loc]; !ok {
+			byLoc[loc] = &regionIPs{location: loc}
+			order = append(order, loc)
+		}
+		byLoc[loc].ips = append(byLoc[loc].ips, fip)
+	}
+	out := make([]regionIPs, 0, len(order))
+	for _, loc := range order {
+		out = append(out, *byLoc[loc])
 	}
 	return out, nil
 }
 
-func (r *Reconciler) ensureStatefulSet(ctx context.Context, heg *egressv1alpha1.HetznerEgressGateway, ips []hcloud.FloatingIP) error {
-	name := names.AgentName(heg.Name)
-	replicas := int32(len(ips))
-	sel := map[string]string{"app.kubernetes.io/name": "egress-agent", crLabelKey: heg.Name}
+// ensureStatefulSets ensures one agent StatefulSet per region (pinned to that region's
+// nodes) and deletes StatefulSets for regions no longer in the spec.
+func (r *Reconciler) ensureStatefulSets(ctx context.Context, heg *egressv1alpha1.HetznerEgressGateway, regions []regionIPs) error {
+	wanted := map[string]bool{}
+	for _, reg := range regions {
+		wanted[names.AgentName(heg.Name, reg.location)] = true
+		if err := r.ensureStatefulSet(ctx, heg, reg); err != nil {
+			return err
+		}
+	}
+	var list appsv1.StatefulSetList
+	if err := r.List(ctx, &list, client.InNamespace(r.Namespace),
+		client.MatchingLabels{crLabelKey: heg.Name}); err != nil {
+		return err
+	}
+	for i := range list.Items {
+		s := &list.Items[i]
+		if !wanted[s.Name] {
+			if err := r.Delete(ctx, s); err != nil && !apierrors.IsNotFound(err) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Reconciler) ensureStatefulSet(ctx context.Context, heg *egressv1alpha1.HetznerEgressGateway, reg regionIPs) error {
+	name := names.AgentName(heg.Name, reg.location)
+	replicas := int32(len(reg.ips))
+	sel := map[string]string{
+		"app.kubernetes.io/name": "egress-agent",
+		crLabelKey:               heg.Name,
+		names.RegionSelectorKey:  reg.location,
+	}
 
 	// Ordered "id:addr" list the agent indexes by its StatefulSet ordinal.
-	parts := make([]string, len(ips))
-	for i, ip := range ips {
+	parts := make([]string, len(reg.ips))
+	for i, ip := range reg.ips {
 		parts[i] = fmt.Sprintf("%d:%s", ip.ID, ip.Address)
 	}
 	ipList := strings.Join(parts, ",")
@@ -128,6 +185,7 @@ func (r *Reconciler) ensureStatefulSet(ctx context.Context, heg *egressv1alpha1.
 	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Namespace}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sts, func() error {
 		priv := true
+		sts.Labels = map[string]string{crLabelKey: heg.Name, names.RegionSelectorKey: reg.location}
 		sts.Spec.Replicas = &replicas
 		sts.Spec.ServiceName = name
 		sts.Spec.Selector = &metav1.LabelSelector{MatchLabels: sel}
@@ -135,6 +193,9 @@ func (r *Reconciler) ensureStatefulSet(ctx context.Context, heg *egressv1alpha1.
 		sts.Spec.Template.Spec.HostNetwork = true
 		sts.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
 		sts.Spec.Template.Spec.ServiceAccountName = r.AgentSA
+		// Pin this region's agents to nodes in that location — a floating IP only
+		// assigns to a server in its home location.
+		sts.Spec.Template.Spec.NodeSelector = map[string]string{names.RegionLabelKey: reg.location}
 		sts.Spec.Template.Spec.Affinity = &corev1.Affinity{PodAntiAffinity: &corev1.PodAntiAffinity{
 			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
 				TopologyKey:   "kubernetes.io/hostname",
@@ -222,13 +283,15 @@ func (r *Reconciler) finalize(ctx context.Context, heg *egressv1alpha1.HetznerEg
 		return nil
 	}
 	if m := heg.Spec.Managed; m != nil && m.ReclaimPolicy == egressv1alpha1.ReclaimDelete {
-		for i := 0; i < m.Count; i++ {
-			fip, err := r.HCloud.EnsureManaged(ctx, heg.Name, i, m.HomeLocation, m.Type, m.Labels)
-			if err != nil {
-				return err
-			}
-			if err := r.HCloud.Delete(ctx, fip.ID); err != nil {
-				return err
+		for _, reg := range m.Regions {
+			for i := 0; i < reg.Count; i++ {
+				fip, err := r.HCloud.EnsureManaged(ctx, heg.Name, reg.Location, i, m.Type, m.Labels)
+				if err != nil {
+					return err
+				}
+				if err := r.HCloud.Delete(ctx, fip.ID); err != nil {
+					return err
+				}
 			}
 		}
 	}

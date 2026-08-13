@@ -15,7 +15,13 @@ const (
 	FloatingIPLabelKey = "egress.maarlab.dev/floating-ip"
 	// Finalizer guards floating-IP reclaim on CR deletion.
 	Finalizer = "egress.maarlab.dev/finalizer"
+	// RegionLabelKey is the well-known node label the controller pins each region's
+	// agents to (a floating IP only assigns to a server in its home location).
+	RegionLabelKey = "topology.kubernetes.io/region"
+	// RegionSelectorKey marks a StatefulSet/pod with its Hetzner region, so the
+	// controller can find and GC per-region agent StatefulSets.
+	RegionSelectorKey = "egress.maarlab.dev/region"
 )
 
-// AgentName is the StatefulSet name the controller creates for a CR's agents.
-func AgentName(cr string) string { return "egress-agent-" + cr }
+// AgentName is the per-region StatefulSet name the controller creates for a CR.
+func AgentName(cr, location string) string { return "egress-agent-" + cr + "-" + location }

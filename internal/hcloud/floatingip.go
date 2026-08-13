@@ -20,6 +20,7 @@ import (
 const (
 	LabelManagedBy = "managed-by"
 	LabelGateway   = "egress-gateway"
+	LabelRegion    = "egress-region"
 	LabelIndex     = "egress-index"
 
 	ManagedByValue = "hcloud-egress-gateway-controller"
@@ -29,12 +30,13 @@ const (
 type FloatingIP struct {
 	ID           int64
 	Address      string
-	AssignedToID int64 // 0 = unassigned
+	Location     string // Hetzner home location (e.g. "nbg1")
+	AssignedToID int64  // 0 = unassigned
 }
 
 // Client is the Hetzner Cloud surface this project uses.
 type Client interface {
-	EnsureManaged(ctx context.Context, gateway string, index int, homeLocation, ipType string, labels map[string]string) (FloatingIP, error)
+	EnsureManaged(ctx context.Context, gateway, location string, index int, ipType string, labels map[string]string) (FloatingIP, error)
 	GetByAddress(ctx context.Context, address string) (FloatingIP, error)
 	Assign(ctx context.Context, ipID, serverID int64) error
 	Delete(ctx context.Context, ipID int64) error
@@ -49,23 +51,27 @@ func New(token string) Client {
 
 func toView(fip *hcloudapi.FloatingIP) FloatingIP {
 	v := FloatingIP{ID: fip.ID, Address: fip.IP.String()}
+	if fip.HomeLocation != nil {
+		v.Location = fip.HomeLocation.Name
+	}
 	if fip.Server != nil {
 		v.AssignedToID = fip.Server.ID
 	}
 	return v
 }
 
-func managedSelector(gateway string, index int) string {
-	return fmt.Sprintf("%s==%s,%s==%s,%s==%d",
-		LabelManagedBy, ManagedByValue, LabelGateway, gateway, LabelIndex, index)
+func managedSelector(gateway, location string, index int) string {
+	return fmt.Sprintf("%s==%s,%s==%s,%s==%s,%s==%d",
+		LabelManagedBy, ManagedByValue, LabelGateway, gateway,
+		LabelRegion, location, LabelIndex, index)
 }
 
-// EnsureManaged adopts the floating IP labelled for (gateway, index) or creates it if
-// none exists. It NEVER recreates: an existing labelled IP is reused as-is so the
-// (allow-listed) address stays stable.
-func (a *apiClient) EnsureManaged(ctx context.Context, gateway string, index int, homeLocation, ipType string, labels map[string]string) (FloatingIP, error) {
+// EnsureManaged adopts the floating IP labelled for (gateway, location, index) or
+// creates it in that location if none exists. It NEVER recreates: an existing labelled
+// IP is reused as-is so the (allow-listed) address stays stable.
+func (a *apiClient) EnsureManaged(ctx context.Context, gateway, location string, index int, ipType string, labels map[string]string) (FloatingIP, error) {
 	existing, err := a.c.FloatingIP.AllWithOpts(ctx, hcloudapi.FloatingIPListOpts{
-		ListOpts: hcloudapi.ListOpts{LabelSelector: managedSelector(gateway, index)},
+		ListOpts: hcloudapi.ListOpts{LabelSelector: managedSelector(gateway, location, index)},
 	})
 	if err != nil {
 		return FloatingIP{}, fmt.Errorf("list floating IPs: %w", err)
@@ -77,6 +83,7 @@ func (a *apiClient) EnsureManaged(ctx context.Context, gateway string, index int
 	all := map[string]string{
 		LabelManagedBy: ManagedByValue,
 		LabelGateway:   gateway,
+		LabelRegion:    location,
 		LabelIndex:     strconv.Itoa(index),
 	}
 	for k, v := range labels {
@@ -86,10 +93,10 @@ func (a *apiClient) EnsureManaged(ctx context.Context, gateway string, index int
 	if strings.EqualFold(ipType, "ipv6") {
 		t = hcloudapi.FloatingIPTypeIPv6
 	}
-	name := fmt.Sprintf("egress-%s-%d", gateway, index)
+	name := fmt.Sprintf("egress-%s-%s-%d", gateway, location, index)
 	res, _, err := a.c.FloatingIP.Create(ctx, hcloudapi.FloatingIPCreateOpts{
 		Type:         t,
-		HomeLocation: &hcloudapi.Location{Name: homeLocation},
+		HomeLocation: &hcloudapi.Location{Name: location},
 		Name:         &name,
 		Labels:       all,
 	})

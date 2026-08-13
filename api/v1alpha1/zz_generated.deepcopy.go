@@ -15,8 +15,22 @@ import (
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
+func (in *ManagedRegion) DeepCopyInto(out *ManagedRegion) { *out = *in }
+
+func (in *ManagedRegion) DeepCopy() *ManagedRegion {
+	if in == nil {
+		return nil
+	}
+	out := new(ManagedRegion)
+	in.DeepCopyInto(out)
+	return out
+}
+
 func (in *ManagedFloatingIPs) DeepCopyInto(out *ManagedFloatingIPs) {
 	*out = *in
+	if in.Regions != nil {
+		out.Regions = append([]ManagedRegion(nil), in.Regions...)
+	}
 	if in.Labels != nil {
 		out2 := make(map[string]string, len(in.Labels))
 		for k, v := range in.Labels {

@@ -5,7 +5,24 @@ Licensed under the Apache License, Version 2.0 (the "License").
 
 package hcloud
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestManagedSelectorIncludesRegion(t *testing.T) {
+	got := managedSelector("partner-api", "nbg1", 2)
+	for _, want := range []string{
+		LabelManagedBy + "==" + ManagedByValue,
+		LabelGateway + "==partner-api",
+		LabelRegion + "==nbg1",
+		LabelIndex + "==2",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("selector %q missing %q", got, want)
+		}
+	}
+}
 
 func TestServerIDFromProviderID(t *testing.T) {
 	cases := map[string]struct {

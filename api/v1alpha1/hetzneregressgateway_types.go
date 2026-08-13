@@ -43,19 +43,34 @@ const (
 	BackendHostRouting EgressBackend = "host-routing"
 )
 
+// ManagedRegion asks for a number of floating IPs in one Hetzner location. A floating
+// IP can only be assigned to a server in its home location, so the controller pins
+// this region's agents to nodes in that location (topology.kubernetes.io/region).
+type ManagedRegion struct {
+	// Location is the Hetzner location, e.g. "nbg1", "fsn1", "hel1".
+	// +kubebuilder:validation:MinLength=1
+	Location string `json:"location"`
+
+	// Count is the number of floating IPs to provision in this location (= gateway
+	// nodes traffic spreads across within the region). Keep it small and stable:
+	// every address must be whitelisted at the upstream provider.
+	// +kubebuilder:validation:Minimum=1
+	Count int `json:"count"`
+}
+
 // ManagedFloatingIPs asks the controller to create and own the floating IPs in
 // Hetzner Cloud (idempotently, keyed by label), instead of adopting pre-existing
 // ones listed in Spec.FloatingIPs.
 type ManagedFloatingIPs struct {
-	// Count is the number of floating IPs to provision (= number of gateway nodes
-	// traffic is spread across). Keep it small and stable: every address must be
-	// whitelisted at the upstream provider.
-	// +kubebuilder:validation:Minimum=1
-	Count int `json:"count"`
-
-	// HomeLocation is the Hetzner home location for the floating IPs, e.g. "fsn1".
-	// +kubebuilder:validation:MinLength=1
-	HomeLocation string `json:"homeLocation"`
+	// Regions is the set of Hetzner locations across which floating IPs are
+	// provisioned. Spread them across the locations where your workloads run so each
+	// region has a fixed egress IP and cross-region egress hops are avoided. NOTE:
+	// Cilium's OSS egress gateway is not topology-aware — a single gateway spanning
+	// regions distributes endpoints to gateway nodes by hash, not by locality; for
+	// guaranteed same-region egress use one CR per region with a region-scoped
+	// podSelector (and region-affine workloads).
+	// +kubebuilder:validation:MinItems=1
+	Regions []ManagedRegion `json:"regions"`
 
 	// Type of floating IP. Defaults to ipv4.
 	// +kubebuilder:validation:Enum=ipv4;ipv6
