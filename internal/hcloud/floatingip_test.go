@@ -10,6 +10,17 @@ import (
 	"testing"
 )
 
+func TestFloatingIPNameHasNoForcedPrefix(t *testing.T) {
+	got := floatingIPName("egress-gateway-dev", "nbg1", 0)
+	if got != "egress-gateway-dev-nbg1-0" {
+		t.Fatalf("floatingIPName = %q, want egress-gateway-dev-nbg1-0", got)
+	}
+	// A generic CR name must not gain any hidden prefix.
+	if got := floatingIPName("partner-api", "fsn1", 2); got != "partner-api-fsn1-2" {
+		t.Fatalf("floatingIPName = %q, want partner-api-fsn1-2", got)
+	}
+}
+
 func TestManagedSelectorIncludesRegion(t *testing.T) {
 	got := managedSelector("partner-api", "nbg1", 2)
 	for _, want := range []string{

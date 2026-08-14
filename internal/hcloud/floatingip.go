@@ -60,6 +60,13 @@ func toView(fip *hcloudapi.FloatingIP) FloatingIP {
 	return v
 }
 
+// floatingIPName is the (cosmetic) Hetzner name for a managed floating IP. Ownership
+// and adoption are by the managed-by/gateway/region/index labels, not the name, so it
+// is fully caller-controlled: the CR name drives it, with no forced prefix.
+func floatingIPName(gateway, location string, index int) string {
+	return fmt.Sprintf("%s-%s-%d", gateway, location, index)
+}
+
 func managedSelector(gateway, location string, index int) string {
 	return fmt.Sprintf("%s==%s,%s==%s,%s==%s,%s==%d",
 		LabelManagedBy, ManagedByValue, LabelGateway, gateway,
@@ -93,10 +100,7 @@ func (a *apiClient) EnsureManaged(ctx context.Context, gateway, location string,
 	if strings.EqualFold(ipType, "ipv6") {
 		t = hcloudapi.FloatingIPTypeIPv6
 	}
-	// The name is cosmetic — ownership/adoption is by the managed-by/gateway/region/
-	// index labels — so keep it fully caller-controlled (no forced prefix): the CR name
-	// drives it, and callers who want an "egress-" prefix simply name their CR that way.
-	name := fmt.Sprintf("%s-%s-%d", gateway, location, index)
+	name := floatingIPName(gateway, location, index)
 	res, _, err := a.c.FloatingIP.Create(ctx, hcloudapi.FloatingIPCreateOpts{
 		Type:         t,
 		HomeLocation: &hcloudapi.Location{Name: location},

@@ -56,6 +56,37 @@ func TestCiliumRenderDefaults(t *testing.T) {
 	}
 }
 
+func TestCiliumRenderCustomCIDRsAndInterface(t *testing.T) {
+	cr := &egressv1alpha1.HetznerEgressGateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw"},
+		Spec: egressv1alpha1.HetznerEgressGatewaySpec{
+			PodSelector:      metav1.LabelSelector{MatchLabels: map[string]string{"egress-via": "gw"}},
+			DestinationCIDRs: []string{"198.51.100.0/24"},
+			ExcludedCIDRs:    []string{"198.51.100.5/32"},
+			EgressInterface:  "egr1",
+		},
+	}
+	obj, err := For(cr).Render(cr)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	u := obj.(*unstructured.Unstructured)
+
+	dst, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "destinationCIDRs")
+	if len(dst) != 1 || dst[0] != "198.51.100.0/24" {
+		t.Fatalf("destinationCIDRs = %v", dst)
+	}
+	// With an explicit destination, the private-range defaults must NOT be injected.
+	excl, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "excludedCIDRs")
+	if len(excl) != 1 || excl[0] != "198.51.100.5/32" {
+		t.Fatalf("excludedCIDRs = %v, want only the explicit one (no defaults)", excl)
+	}
+	iface, _, _ := unstructured.NestedString(u.Object, "spec", "egressGateway", "interface")
+	if iface != "egr1" {
+		t.Fatalf("interface = %q, want egr1", iface)
+	}
+}
+
 func TestHostRoutingRendersNothing(t *testing.T) {
 	cr := &egressv1alpha1.HetznerEgressGateway{
 		ObjectMeta: metav1.ObjectMeta{Name: "x"},
