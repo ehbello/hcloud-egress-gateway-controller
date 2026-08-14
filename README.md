@@ -64,6 +64,11 @@ Two modes (mutually exclusive):
 
 `status.floatingIPs[].address` lists the live addresses **to allow-list upstream**.
 
+Managed floating IPs are named `<cr-name>-<region>-<index>` (the CR name drives it — no
+forced prefix) and carry the Hetzner label `managed-by=hcloud-egress-gateway-controller`;
+filter on that label to find every controller-owned IP. The name is cosmetic — adoption
+is keyed on the labels, not the name.
+
 ## Example
 ```yaml
 apiVersion: egress.maarlab.dev/v1alpha1
