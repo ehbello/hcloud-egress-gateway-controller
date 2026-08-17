@@ -113,6 +113,16 @@ one CR per region with a region-scoped `podSelector` and region-affine workloads
 - A Hetzner Cloud API token (read/write floating IPs + servers), provided as a Secret.
 - Nodes whose `spec.providerID` is `hcloud://<id>` (Hetzner CCM / Cluster API).
 - A namespace allowed to run privileged pods (the agent needs `hostNetwork` + `NET_ADMIN`).
+- The **`dummy` kernel module** available on the nodes: the agent creates a dummy
+  interface (`egr0`) to hold the floating IP. Most distros autoload it, but hardened
+  ones (e.g. **Talos**) deny on-demand module loading, so `ip link add … type dummy`
+  fails with `operation not permitted` (EPERM). Preload it — on Talos:
+  ```yaml
+  machine:
+    kernel:
+      modules:
+        - name: dummy
+  ```
 - For `backend: cilium` (default): Cilium ≥ 1.14 with `egressGateway.enabled: true`
   (validated on 1.19). For `backend: host-routing`: no CNI feature required.
 
