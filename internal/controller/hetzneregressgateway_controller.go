@@ -203,10 +203,17 @@ func (r *Reconciler) ensureStatefulSet(ctx context.Context, heg *egressv1alpha1.
 			}},
 		}}
 		sts.Spec.Template.Spec.Containers = []corev1.Container{{
-			Name:            "agent",
-			Image:           r.AgentImage,
-			Args:            []string{"agent"},
-			SecurityContext: &corev1.SecurityContext{Privileged: &priv},
+			Name:  "agent",
+			Image: r.AgentImage,
+			Args:  []string{"agent"},
+			// privileged for host-netns interface/sysctl changes, AND the spc_t SELinux
+			// domain: on SELinux-enforcing nodes (e.g. Talos) privileged alone lands in
+			// container_t, which is denied netlink link creation (EPERM) regardless of
+			// interface type — spc_t (super-privileged container) is required.
+			SecurityContext: &corev1.SecurityContext{
+				Privileged:     &priv,
+				SELinuxOptions: &corev1.SELinuxOptions{Type: "spc_t"},
+			},
 			Env: []corev1.EnvVar{
 				{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
 				{Name: "NODE_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"}}},

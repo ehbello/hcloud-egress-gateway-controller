@@ -25,7 +25,7 @@ For each `HetznerEgressGateway`:
    - claims its floating IP (stable ordinal→IP mapping),
    - (managed mode) creates the floating IP in Hetzner if missing, idempotently by label,
    - **assigns** the floating IP to its node's Hetzner server (API),
-   - creates the egress interface (`egr0` by default, a veth) and adds the floating IP to it,
+   - creates the egress interface (`egr0` by default, a dummy) and adds the floating IP to it,
    - **labels its node** `egress.maarlab.dev/gateway=<cr-name>`.
 3. The controller programs the **egress redirect** via the selected backend so that
    the CR's `podSelector` pods egress through the gateway nodes, each SNAT'ing to
@@ -105,7 +105,7 @@ one CR per region with a region-scoped `podSelector` and region-affine workloads
 - `api/v1alpha1/` — the `HetznerEgressGateway` CRD types.
 - `cmd/` — single binary, two modes: `controller` and `agent`.
 - `internal/controller/` — reconciles the CR → StatefulSet + egress-redirect resource + node-label GC.
-- `internal/agent/` — per-node: hcloud assign + egress (veth) interface + node label.
+- `internal/agent/` — per-node: hcloud assign + egress (dummy) interface + node label.
 - `internal/hcloud/` — Hetzner Cloud API (create/adopt/assign floating IPs).
 - `charts/hcloud-egress-gateway-controller/` — Helm chart (CRD + controller Deployment + RBAC).
 
@@ -113,9 +113,10 @@ one CR per region with a region-scoped `podSelector` and region-affine workloads
 - A Hetzner Cloud API token (read/write floating IPs + servers), provided as a Secret.
 - Nodes whose `spec.providerID` is `hcloud://<id>` (Hetzner CCM / Cluster API).
 - A namespace allowed to run privileged pods (the agent needs `hostNetwork` + `NET_ADMIN`).
-- No special kernel module: the agent creates `egr0` as a **veth** (the veth module is
-  present on every Kubernetes node — the CNI relies on it), so it works on hardened /
-  minimal distros like **Talos** with no extra node configuration.
+- SELinux-enforcing nodes (e.g. **Talos**): the agent pod runs `privileged` **and** with
+  the `spc_t` SELinux domain (both set by the controller). Without `spc_t`, creating the
+  `egr0` interface is denied with `operation not permitted` even when privileged. No
+  `egr0` is a dummy interface (module built-in on essentially all kernels); no extra node config is required.
 - For `backend: cilium` (default): Cilium ≥ 1.14 with `egressGateway.enabled: true`
   (validated on 1.19). For `backend: host-routing`: no CNI feature required.
 
