@@ -185,6 +185,7 @@ func (r *Reconciler) ensureStatefulSet(ctx context.Context, heg *egressv1alpha1.
 	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Namespace}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sts, func() error {
 		priv := true
+		rootUID := int64(0)
 		sts.Labels = map[string]string{crLabelKey: heg.Name, names.RegionSelectorKey: reg.location}
 		sts.Spec.Replicas = &replicas
 		sts.Spec.ServiceName = name
@@ -206,12 +207,16 @@ func (r *Reconciler) ensureStatefulSet(ctx context.Context, heg *egressv1alpha1.
 			Name:  "agent",
 			Image: r.AgentImage,
 			Args:  []string{"agent"},
-			// privileged for host-netns interface/sysctl changes, AND the spc_t SELinux
-			// domain: on SELinux-enforcing nodes (e.g. Talos) privileged alone lands in
-			// container_t, which is denied netlink link creation (EPERM) regardless of
-			// interface type — spc_t (super-privileged container) is required.
+			// The agent modifies host networking (create egr0, ip addr, rp_filter sysctls),
+			// which needs CAP_NET_ADMIN in the process's EFFECTIVE set. That requires
+			// running as ROOT: a privileged container running as non-root (the distroless
+			// image's default UID 65532) has an empty effective-cap set and gets EPERM.
+			// runAsUser 0 + privileged gives the full effective caps. seLinuxOptions spc_t
+			// is defensive: a no-op under permissive SELinux, required if it's enforcing.
 			SecurityContext: &corev1.SecurityContext{
 				Privileged:     &priv,
+				RunAsUser:      &rootUID,
+				RunAsGroup:     &rootUID,
 				SELinuxOptions: &corev1.SELinuxOptions{Type: "spc_t"},
 			},
 			Env: []corev1.EnvVar{

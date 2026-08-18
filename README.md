@@ -112,11 +112,12 @@ one CR per region with a region-scoped `podSelector` and region-affine workloads
 ## Requirements
 - A Hetzner Cloud API token (read/write floating IPs + servers), provided as a Secret.
 - Nodes whose `spec.providerID` is `hcloud://<id>` (Hetzner CCM / Cluster API).
-- A namespace allowed to run privileged pods (the agent needs `hostNetwork` + `NET_ADMIN`).
-- SELinux-enforcing nodes (e.g. **Talos**): the agent pod runs `privileged` **and** with
-  the `spc_t` SELinux domain (both set by the controller). Without `spc_t`, creating the
-  `egr0` interface is denied with `operation not permitted` even when privileged. No
-  `egr0` is a dummy interface (module built-in on essentially all kernels); no extra node config is required.
+- A namespace allowed to run privileged pods. The agent needs `hostNetwork` and runs
+  **`privileged` as root** (`runAsUser: 0`, set by the controller): it manipulates host
+  networking, which needs `CAP_NET_ADMIN` in the effective set — a privileged container
+  running as non-root has empty effective caps and fails with `operation not permitted`.
+  It also sets `spc_t` SELinux (a no-op under permissive SELinux; required if enforcing,
+  e.g. **Talos**). `egr0` is a dummy interface (module built-in on essentially all kernels).
 - For `backend: cilium` (default): Cilium ≥ 1.14 with `egressGateway.enabled: true`
   (validated on 1.19). For `backend: host-routing`: no CNI feature required.
 

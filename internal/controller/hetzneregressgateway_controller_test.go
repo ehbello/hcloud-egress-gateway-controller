@@ -188,6 +188,11 @@ func TestEnsureStatefulSetsPerRegionAndGC(t *testing.T) {
 	if c.SecurityContext == nil || c.SecurityContext.Privileged == nil || !*c.SecurityContext.Privileged {
 		t.Fatal("agent must run privileged")
 	}
+	// Must run as root: a privileged container running as non-root has an empty
+	// effective-cap set and can't create the egr0 interface (EPERM).
+	if c.SecurityContext.RunAsUser == nil || *c.SecurityContext.RunAsUser != 0 {
+		t.Fatalf("agent must run as root (runAsUser 0), got %v", c.SecurityContext.RunAsUser)
+	}
 	if got := envValue(c.Env, "EGRESS_FLOATING_IPS"); got != "2:2.2.2.2,3:3.3.3.3" {
 		t.Fatalf("EGRESS_FLOATING_IPS = %q", got)
 	}
