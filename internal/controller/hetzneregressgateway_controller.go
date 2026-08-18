@@ -207,7 +207,7 @@ func (r *Reconciler) ensureStatefulSet(ctx context.Context, heg *egressv1alpha1.
 			Name:  "agent",
 			Image: r.AgentImage,
 			Args:  []string{"agent"},
-			// The agent modifies host networking (create egr0, ip addr, rp_filter sysctls),
+			// The agent modifies host networking (create egr0, add the floating IP),
 			// which needs CAP_NET_ADMIN in the process's EFFECTIVE set. That requires
 			// running as ROOT: a privileged container running as non-root (the distroless
 			// image's default UID 65532) has an empty effective-cap set and gets EPERM.

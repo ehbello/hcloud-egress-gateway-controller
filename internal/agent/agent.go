@@ -147,9 +147,13 @@ func (c *config) ensureInterface() error {
 	if err := netlink.AddrReplace(link, addr); err != nil {
 		return fmt.Errorf("add %s to %s: %w", c.ipAddr, c.iface, err)
 	}
-	// Loose reverse-path filtering so asymmetric egress return traffic isn't dropped.
-	writeSysctl("net/ipv4/conf/all/rp_filter", "2")
-	writeSysctl("net/ipv4/conf/"+c.iface+"/rp_filter", "2")
+	// Deliberately do NOT touch rp_filter. The effective reverse-path filter of any
+	// interface is max(conf.all.rp_filter, conf.<iface>.rp_filter), so raising conf.all
+	// to 1/2 forces RPF onto the CNI's own interfaces — Cilium's cilium_host and the
+	// lxc* pod veths require rp_filter=0 — and silently drops pod traffic on the gateway
+	// node (pods lose ClusterIP/pod-to-pod connectivity while the host netns still works).
+	// egr0 is a dummy that only holds the floating IP; nothing ingresses it, so no
+	// rp_filter tuning is needed for egress SNAT to work.
 	return nil
 }
 
@@ -283,10 +287,6 @@ func k8sClient() (kubernetes.Interface, error) {
 		return nil, err
 	}
 	return kubernetes.NewForConfig(cfg)
-}
-
-func writeSysctl(path, val string) {
-	_ = os.WriteFile("/proc/sys/"+path, []byte(val), 0o644)
 }
 
 // logr is the minimal logger surface used here (matches controller-runtime's logr.Logger).
