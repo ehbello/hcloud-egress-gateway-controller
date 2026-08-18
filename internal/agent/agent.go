@@ -117,15 +117,21 @@ func (c *config) assertOnce(ctx context.Context, l logr, k8s kubernetes.Interfac
 	return nil
 }
 
-// ensureInterface creates the dummy link (if missing) and puts the floating IP on it,
+// ensureInterface creates the egress link (if missing) and puts the floating IP on it,
 // so interface-mode SNAT (or host routing) uses the floating IP as source.
+//
+// The link is a veth, not a dummy: the veth module is present on every Kubernetes node
+// (the CNI relies on it), whereas the dummy module is absent on hardened/minimal
+// distros like Talos, where `ip link add … type dummy` fails with EPERM. Only the IP
+// carrier (c.iface) is brought up; the peer is inert.
 func (c *config) ensureInterface() error {
 	link, err := netlink.LinkByName(c.iface)
 	if err != nil {
 		attrs := netlink.NewLinkAttrs()
 		attrs.Name = c.iface
-		if err := netlink.LinkAdd(&netlink.Dummy{LinkAttrs: attrs}); err != nil {
-			return fmt.Errorf("create dummy %s: %w", c.iface, err)
+		veth := &netlink.Veth{LinkAttrs: attrs, PeerName: c.iface + "-peer"}
+		if err := netlink.LinkAdd(veth); err != nil {
+			return fmt.Errorf("create veth %s: %w", c.iface, err)
 		}
 		if link, err = netlink.LinkByName(c.iface); err != nil {
 			return err

@@ -116,7 +116,7 @@ type HetznerEgressGatewaySpec struct {
 	// +optional
 	ExcludedCIDRs []string `json:"excludedCIDRs,omitempty"`
 
-	// EgressInterface is the name of the dummy interface the agent creates on each
+	// EgressInterface is the name of the veth interface the agent creates on each
 	// gateway node to hold that node's floating IP; the egress backend SNATs to this
 	// interface's address, so N gateway nodes each SNAT to their own floating IP and
 	// traffic spreads across them.
