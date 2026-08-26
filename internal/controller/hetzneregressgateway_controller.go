@@ -48,6 +48,24 @@ type Reconciler struct {
 	TokenSecretKey  string
 }
 
+// RBAC for the ClusterRole is generated from these markers by `make manifests`. The
+// ClusterRole is shared by the controller and the agents it spawns (same
+// ServiceAccount); leader-election Leases and the hcloud token Secret are namespaced
+// and stay in the hand-written Role/RoleBinding — they need no cluster scope.
+//
+// These MUST be a package-level (floating) comment, separated by a blank line from the
+// Reconcile doc below: controller-gen only collects kubebuilder:rbac markers from
+// package-level comments, not from a declaration's doc comment.
+//
+// +kubebuilder:rbac:groups=egress.maarlab.dev,resources=hetzneregressgateways,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=egress.maarlab.dev,resources=hetzneregressgateways/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=egress.maarlab.dev,resources=hetzneregressgateways/finalizers,verbs=update
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cilium.io,resources=ciliumegressgatewaypolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+
 // Reconcile drives the CR to its desired state:
 //
 //  1. Resolve the floating IP set (BYO adopt / managed create-if-missing, keyed by

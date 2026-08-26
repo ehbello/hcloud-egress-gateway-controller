@@ -1,0 +1,82 @@
+{{- /* Generated from +kubebuilder:rbac markers by "make manifests"; do not edit. */ -}}
+{{- if .Values.rbac.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cilium.io
+  resources:
+  - ciliumegressgatewaypolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - egress.maarlab.dev
+  resources:
+  - hetzneregressgateways
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - egress.maarlab.dev
+  resources:
+  - hetzneregressgateways/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - egress.maarlab.dev
+  resources:
+  - hetzneregressgateways/status
+  verbs:
+  - get
+  - patch
+  - update
+{{- end }}

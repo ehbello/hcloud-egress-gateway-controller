@@ -29,3 +29,8 @@ agent:
 
 # Install the CRD with the chart (set false if managed separately).
 installCRD: true
+
+# Create the RBAC ClusterRole (generated from +kubebuilder:rbac markers) and the
+# ClusterRoleBinding + namespaced Role/RoleBinding. Set false to bring your own.
+rbac:
+  create: true

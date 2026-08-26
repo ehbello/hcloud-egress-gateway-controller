@@ -3,36 +3,9 @@ kind: ServiceAccount
 metadata:
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
+{{- if .Values.rbac.create }}
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: {{ .Release.Name }}
-rules:
-  # The CRD this controller owns.
-  - apiGroups: [egress.maarlab.dev]
-    resources: [hetzneregressgateways, hetzneregressgateways/status, hetzneregressgateways/finalizers]
-    verbs: [get, list, watch, update, patch]
-  # Agent StatefulSets the controller generates per CR.
-  - apiGroups: [apps]
-    resources: [statefulsets]
-    verbs: [get, list, watch, create, update, patch, delete]
-  # The egress policy the controller renders.
-  - apiGroups: [cilium.io]
-    resources: [ciliumegressgatewaypolicies]
-    verbs: [get, list, watch, create, update, patch, delete]
-  # Nodes: controller GC of stale gateway labels; agent labels its own node.
-  - apiGroups: [""]
-    resources: [nodes]
-    verbs: [get, list, watch, patch, update]
-  # Agent reads pods (to resolve its ordinal/node) and the CR.
-  - apiGroups: [""]
-    resources: [pods]
-    verbs: [get, list, watch]
-  - apiGroups: [""]
-    resources: [events]
-    verbs: [create, patch]
----
+# ClusterRole is generated into clusterrole.yaml from the +kubebuilder:rbac markers.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -73,6 +46,7 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Release.Name }}
     namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -1,5 +1,6 @@
 /bin/
 /out/
+/.gen/
 *.test
 *.out
 cover.out
