@@ -1,0 +1,15 @@
+{{- if .Values.rbac.create }}
+# Namespaced: leader-election leases + the hcloud token Secret (no cluster scope needed).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+{{- end }}

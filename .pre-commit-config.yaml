@@ -1,0 +1,33 @@
+# Guards the Helm chart this repository ships. Everything here is scoped to charts/: the
+# service's own tooling (formatters, type checkers) is not this file's business, and a commit
+# that does not touch the chart runs nothing.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # Helm templates are Go templates, not YAML — every one of them would fail the parser.
+      - id: check-yaml
+        files: ^charts/
+        exclude: ^charts/.*/templates/.*$
+      - id: end-of-file-fixer
+        files: ^charts/
+        exclude: ^charts/.*/templates/.*$
+      - id: trailing-whitespace
+        files: ^charts/
+        exclude: ^charts/.*/templates/.*$
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: helm-lint
+        name: helm lint (charts)
+        language: system
+        files: ^charts/
+        pass_filenames: false
+        entry: .pre-commit-scripts/helm-lint-all.sh
+
+      - id: one-manifest-per-file
+        name: one manifest per file
+        language: system
+        files: ^charts/.*\.ya?ml$
+        entry: .pre-commit-scripts/one-manifest-per-file.sh
