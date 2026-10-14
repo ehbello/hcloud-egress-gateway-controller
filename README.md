@@ -2,74 +2,48 @@
 
 [![CI](https://github.com/maarlab-rethinking/hcloud-egress-gateway-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/maarlab-rethinking/hcloud-egress-gateway-controller/actions/workflows/ci.yml)
 
-Give selected Kubernetes pods a **stable, fixed egress source IP** — a set of
-**Hetzner Cloud floating IPs** — spread across the nodes where the controller's
-agents run, so upstream services that filter by source IP accept the traffic. No
-fixed egress node pool, no external VMs: the egress "identity" follows the agent
-pods wherever the scheduler puts them.
+Give selected Kubernetes pods a **stable, fixed egress source IP** — a set of **Hetzner Cloud floating
+IPs** — spread across the nodes where the controller's agents run, so upstreams that filter by source
+IP accept the traffic. No fixed egress node pool and no external VMs: the egress identity follows the
+agent pods wherever the scheduler puts them.
 
 Apache-2.0. Maintained by Maarlab Rethinking.
 
 ## Why
-On Kubernetes, a pod's egress is SNAT'd to the **node** IP, which changes as nodes
-are recycled (Cluster API, autoscaling). Any upstream that allow-lists source IPs
-then breaks. This controller decouples a **stable floating IP** from the node
-lifecycle and lets services opt in by label, keeping the platform fully dynamic.
 
-## How it works
-For each `HetznerEgressGateway`:
+On Kubernetes a pod's egress is SNAT'd to its **node** IP, which changes as nodes are recycled by
+Cluster API and autoscaling, so any upstream that allow-lists source IPs breaks. This controller
+decouples a **stable floating IP** from the node lifecycle and lets services opt in by label, keeping
+the platform fully dynamic.
 
-1. The **controller** creates a `StatefulSet` of *N* **agent** pods (N = number of
-   floating IPs), with pod anti-affinity so they land on *N* distinct nodes.
-2. Each **agent** (`hostNetwork`, `NET_ADMIN`) on its node:
-   - claims its floating IP (stable ordinal→IP mapping),
-   - (managed mode) creates the floating IP in Hetzner if missing, idempotently by label,
-   - **assigns** the floating IP to its node's Hetzner server (API),
-   - creates the egress interface (`egr0` by default, a dummy) and adds the floating IP to it,
-   - **labels its node** `egress.maarlab.dev/gateway=<cr-name>`.
-3. The controller programs the **egress redirect** via the selected backend so that
-   the CR's `podSelector` pods egress through the gateway nodes, each SNAT'ing to
-   *its* floating IP.
+It owns only the half the ecosystem is missing — provisioning the Hetzner floating IP and keeping it
+live on a node — and **delegates the actual redirect to the CNI** (Cilium by default). A general egress
+gateway does the redirect but cannot provision a routable cloud IP;
+[ADR-0001](docs/decisions/0001-floating-ip-controller-not-datapath.md) says why that split is the point.
 
-Traffic spreads across the *N* stable IPs (no single-node bottleneck), with failover
-to surviving gateways while an agent re-homes a floating IP after a node is recycled.
+## Documentation
 
-## CNI support (egress backends)
-Only step 3 — the egress *redirect* — is CNI-specific; everything else (floating-IP
-lifecycle, node assignment, interface, labels) is CNI-independent. It's a pluggable
-backend (`spec.backend`):
+- [Architecture](docs/architecture.md): what one reconcile and one agent loop do, in order and with
+  reasons, and the [decision records](docs/decisions/) for the alternatives that lost.
+- [Operations](docs/operations.md): reading the status, installing and upgrading, compatibility, the
+  Hetzner token, floating-IP lifecycle and reclaim, regions and locality, backends, moving and retiring.
+- [Runbook](docs/runbook.md): symptom first — a low `readyGateways`, a crashlooping agent, traffic not
+  using the floating IP, a gateway node losing connectivity — and what to do about each.
+- [API reference](docs/api.md), generated from the Go types.
 
-- **`cilium`** (default): renders a `CiliumEgressGatewayPolicy`. Requires Cilium with
-  egress gateway enabled. Cilium's egress-gateway HA distributes source endpoints
-  across the gateway nodes (by CiliumEndpoint UID) and each SNATs to its floating IP
-  via `interface` mode — so you get multi-IP spreading + failover for free.
-- **`host-routing`**: CNI-independent — the agent programs policy routing + SNAT
-  (nftables) in the node's host netns itself. Works on any CNI that permits host-level
-  SNAT; spreading/HA semantics are whatever the routing setup provides, not a CNI feature.
+## Install
 
-Adding a backend for another CNI's egress-gateway construct is a matter of
-implementing the redirect renderer; the rest of the controller is reused as-is.
+```console
+helm upgrade --install hcloud-egress-gateway charts/hcloud-egress-gateway-controller \
+  --namespace egress-system --create-namespace
+```
 
-## Floating IP lifecycle
-Two modes (mutually exclusive):
+The namespace must allow privileged pods: the agents run `hostNetwork` and `privileged` as root
+([ADR-0003](docs/decisions/0003-agent-runs-as-root.md)). The Hetzner token is read from the Secret named
+by `hcloud.tokenSecretName`. Every value is in `values.yaml`.
 
-- **BYO** (`spec.floatingIPs: [addr, ...]`): adopt pre-created, already-allow-listed IPs.
-- **Managed** (`spec.managed`): the controller creates/owns them in Hetzner,
-  idempotently keyed by label, and **never recreates** them (the address is
-  allow-listed upstream and must stay stable).
-  - `reclaimPolicy: Retain` (default) — leaves the IPs on CR deletion (a cheap
-    orphaned floating IP is far better than losing an allow-listed address); re-adopted
-    by label if the CR is recreated.
-  - `reclaimPolicy: Delete` — deletes them (ephemeral/test only).
+## A gateway
 
-`status.floatingIPs[].address` lists the live addresses **to allow-list upstream**.
-
-Managed floating IPs are named `<cr-name>-<region>-<index>` (the CR name drives it — no
-forced prefix) and carry the Hetzner label `managed-by=hcloud-egress-gateway-controller`;
-filter on that label to find every controller-owned IP. The name is cosmetic — adoption
-is keyed on the labels, not the name.
-
-## Example
 ```yaml
 apiVersion: egress.maarlab.dev/v1alpha1
 kind: HetznerEgressGateway
@@ -87,41 +61,51 @@ spec:
       egress-via: partner-api
   # destinationCIDRs omitted => any destination (0.0.0.0/0), cluster-internal excluded
 ```
-A workload opts in by adding `egress-via: partner-api` to its pods.
 
-### Regions & locality
-A Hetzner floating IP only assigns to a server in its **home location**, so the
-controller runs one agent StatefulSet per region, pinned to that location's nodes
-(`topology.kubernetes.io/region`). List the locations where your workloads run under
-`managed.regions` so each has a fixed egress IP (BYO IPs are grouped by their
-API-reported location automatically). **Whitelist every address across all regions.**
+```console
+$ kubectl get hetzneregressgateway
+NAME          READY   AGE
+partner-api   2       3m
+```
 
-Note: Cilium's OSS egress gateway is **not topology-aware** — with one CR spanning
-several regions it distributes endpoints to gateway nodes by hash, not by locality, so
-a pod may egress via another region's gateway. For guaranteed same-region egress, use
-one CR per region with a region-scoped `podSelector` and region-affine workloads.
+A workload opts in by carrying `egress-via: partner-api` on its pods; pods without the label egress
+from their node's own IP. The live addresses to allow-list upstream are in `status.floatingIPs[].address`.
 
-## Layout
-- `api/v1alpha1/` — the `HetznerEgressGateway` CRD types.
-- `cmd/` — single binary, two modes: `controller` and `agent`.
-- `internal/controller/` — reconciles the CR → StatefulSet + egress-redirect resource + node-label GC.
-- `internal/agent/` — per-node: hcloud assign + egress (dummy) interface + node label.
-- `internal/hcloud/` — Hetzner Cloud API (create/adopt/assign floating IPs).
-- `charts/hcloud-egress-gateway-controller/` — Helm chart (CRD + controller Deployment + RBAC).
+## Floating IPs are an allow-listed asset
 
-## Requirements
-- A Hetzner Cloud API token (read/write floating IPs + servers), provided as a Secret.
-- Nodes whose `spec.providerID` is `hcloud://<id>` (Hetzner CCM / Cluster API).
-- A namespace allowed to run privileged pods. The agent needs `hostNetwork` and runs
-  **`privileged` as root** (`runAsUser: 0`, set by the controller): it manipulates host
-  networking, which needs `CAP_NET_ADMIN` in the effective set — a privileged container
-  running as non-root has empty effective caps and fails with `operation not permitted`.
-  It also sets `spc_t` SELinux (a no-op under permissive SELinux; required if enforcing,
-  e.g. **Talos**). `egr0` is a dummy interface (module built-in on essentially all kernels).
-- For `backend: cilium` (default): Cilium ≥ 1.14 with `egressGateway.enabled: true`
-  (validated on 1.19). For `backend: host-routing`: no CNI feature required.
+A managed floating IP is created once and then **adopted by label, never recreated**, and
+`reclaimPolicy` defaults to `Retain`, so deleting and recreating the CR keeps the exact same address
+([ADR-0006](docs/decisions/0006-managed-floating-ips-adopt-never-recreate.md)). An allow-listed address
+is expensive to change; the controller treats losing one as worse than an orphaned IP. Bring your own
+pre-allow-listed addresses instead with `spec.floatingIPs`.
+
+## The redirect is the CNI's job
+
+Only the egress redirect is CNI-specific; the floating-IP lifecycle, node assignment, interface and
+labels are not. It is a pluggable backend
+([ADR-0002](docs/decisions/0002-cilium-default-host-routing-fallback.md)): `cilium` (default) renders a
+`CiliumEgressGatewayPolicy` and lets Cilium spread endpoints and SNAT via `interface` mode on `egr0`;
+`host-routing` programs policy routing and `nft` SNAT in the agent itself, for any CNI. Cilium's OSS
+egress gateway is **not topology-aware**, so a pod may egress through another region's gateway — which
+is why every address is allow-listed ([operations](docs/operations.md#regions-and-locality)).
+
+## Development
+
+```console
+make test                        # unit tests (fake client + fake hcloud)
+make lint vet helm-lint
+make generate manifests api-docs # after changing api/ or the +kubebuilder markers
+```
+
+Tools are pinned in the `Makefile`. `make manifests` generates the CRD and the ClusterRole into the
+chart's `templates/`, and `make api-docs` the [API reference](docs/api.md), all from the Go source;
+never edit those by hand, CI fails on drift ([ADR-0008](docs/decisions/0008-generate-crd-rbac-api-reference.md)).
+pre-commit hooks (`pre-commit install`) run the generated-files check, helm lint and the
+one-manifest-per-file rule. The agent's netlink path and the real Hetzner client run only on a cluster,
+not in CI.
 
 ## Status
-Alpha (`v1alpha1`). The controller, agent and both egress backends are implemented and
-unit-tested; the API is not yet stable. The default `cilium` backend is the exercised
-path; `host-routing` is a best-effort extension point (requires `nft` in the image).
+
+Alpha (`v1alpha1`); the API is not yet stable. The controller, agent and both backends are implemented
+and unit-tested. The default `cilium` backend is the exercised path; `host-routing` is a best-effort
+extension point (needs `nft` in the image).
