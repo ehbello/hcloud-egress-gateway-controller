@@ -10,16 +10,16 @@ package backend
 import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	egressv1alpha1 "github.com/maarlab-rethinking/hcloud-egress-gateway-controller/api/v1alpha1"
 	"github.com/maarlab-rethinking/hcloud-egress-gateway-controller/internal/names"
 )
 
 // Renderer builds the egress-redirect object for a HetznerEgressGateway, or nil if the
-// backend needs no cluster resource (it's handled node-side by the agent).
+// backend needs no cluster resource (it's handled node-side by the agent). The object
+// is unstructured because its CRD belongs to the CNI and is not in the scheme.
 type Renderer interface {
-	Render(cr *egressv1alpha1.HetznerEgressGateway) (client.Object, error)
+	Render(cr *egressv1alpha1.HetznerEgressGateway) (*unstructured.Unstructured, error)
 }
 
 // For returns the Renderer for the CR's backend (defaults to cilium).
@@ -39,7 +39,7 @@ var defaultExcluded = []string{
 
 type cilium struct{}
 
-func (cilium) Render(cr *egressv1alpha1.HetznerEgressGateway) (client.Object, error) {
+func (cilium) Render(cr *egressv1alpha1.HetznerEgressGateway) (*unstructured.Unstructured, error) {
 	podSel, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&cr.Spec.PodSelector)
 	if err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ type hostRouting struct{}
 
 // Render returns nil: the agent programs policy-routing + SNAT in the node netns, so
 // there is no cluster-level redirect object.
-func (hostRouting) Render(*egressv1alpha1.HetznerEgressGateway) (client.Object, error) {
+func (hostRouting) Render(*egressv1alpha1.HetznerEgressGateway) (*unstructured.Unstructured, error) {
 	return nil, nil
 }
 

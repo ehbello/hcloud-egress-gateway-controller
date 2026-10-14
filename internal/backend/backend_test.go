@@ -26,10 +26,7 @@ func TestCiliumRenderDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	u, ok := obj.(*unstructured.Unstructured)
-	if !ok {
-		t.Fatalf("expected *unstructured.Unstructured, got %T", obj)
-	}
+	u := obj
 	if u.GetKind() != "CiliumEgressGatewayPolicy" || u.GetAPIVersion() != "cilium.io/v2" {
 		t.Fatalf("unexpected GVK: %s %s", u.GetAPIVersion(), u.GetKind())
 	}
@@ -70,7 +67,7 @@ func TestCiliumRenderCustomCIDRsAndInterface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	u := obj.(*unstructured.Unstructured)
+	u := obj
 
 	dst, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "destinationCIDRs")
 	if len(dst) != 1 || dst[0] != "198.51.100.0/24" {
