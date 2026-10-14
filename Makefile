@@ -1,6 +1,6 @@
 IMG ?= ghcr.io/maarlab-rethinking/hcloud-egress-gateway-controller:dev
 CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
-GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
+GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 CRD_REF_DOCS ?= go run github.com/elastic/crd-ref-docs@v0.3.0
 
 CHART := charts/hcloud-egress-gateway-controller

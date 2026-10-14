@@ -208,7 +208,7 @@ func (r *Reconciler) ensureStatefulSet(ctx context.Context, heg *egressv1alpha1.
 		sts.Spec.Replicas = &replicas
 		sts.Spec.ServiceName = name
 		sts.Spec.Selector = &metav1.LabelSelector{MatchLabels: sel}
-		sts.Spec.Template.ObjectMeta.Labels = sel
+		sts.Spec.Template.Labels = sel
 		sts.Spec.Template.Spec.HostNetwork = true
 		sts.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
 		sts.Spec.Template.Spec.ServiceAccountName = r.AgentSA
