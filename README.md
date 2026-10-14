@@ -104,6 +104,12 @@ pre-commit hooks (`pre-commit install`) run the generated-files check, helm lint
 one-manifest-per-file rule. The agent's netlink path and the real Hetzner client run only on a cluster,
 not in CI.
 
+CI builds with the newest patch release of the Go minor in `GO_VERSION`, not with the `go` directive
+of `go.mod`, which is only the minimum. govulncheck runs on every push and daily, so a vulnerability
+fixed in a new Go or dependency release turns it red without a push; Dependabot proposes the
+dependency, action and base image bumps weekly. Raise `GO_VERSION` with the Dockerfile's `golang`
+image when Go moves to a new minor.
+
 ## Status
 
 Alpha (`v1alpha1`); the API is not yet stable. The controller, agent and both backends are implemented
