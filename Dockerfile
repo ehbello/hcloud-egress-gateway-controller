@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.23 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 # Download modules first (cached layer) — fail fast if the module set is broken.
 COPY go.mod go.sum ./
