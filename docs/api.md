@@ -8,6 +8,10 @@
 
 Package v1alpha1 contains the API types for the egress.maarlab.dev group.
 
+The scheme is registered through apimachinery's own SchemeBuilder rather than
+controller-runtime's helper, so that importing these types costs nothing beyond
+apimachinery.
+
 ### Resource Types
 - [HetznerEgressGateway](#hetzneregressgateway)
 - [HetznerEgressGatewayList](#hetzneregressgatewaylist)

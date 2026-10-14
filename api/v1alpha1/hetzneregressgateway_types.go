@@ -176,7 +176,3 @@ type HetznerEgressGatewayList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []HetznerEgressGateway `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&HetznerEgressGateway{}, &HetznerEgressGatewayList{})
-}
