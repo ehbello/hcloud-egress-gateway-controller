@@ -1,11 +1,12 @@
 IMG ?= ghcr.io/maarlab-rethinking/hcloud-egress-gateway-controller:dev
 CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
 GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
+CRD_REF_DOCS ?= go run github.com/elastic/crd-ref-docs@v0.3.0
 
 CHART := charts/hcloud-egress-gateway-controller
 GENDIR := .gen
 
-.PHONY: all tidy generate manifests build test docker fmt vet lint helm-lint
+.PHONY: all tidy generate manifests api-docs build test docker fmt vet lint helm-lint
 all: build
 
 tidy:
@@ -44,6 +45,9 @@ manifests: ## CRD + RBAC ClusterRole -> chart templates (generated; do not hand-
 	  echo '{{- end }}'; \
 	} > $(CHART)/templates/clusterrole.yaml
 	@rm -rf $(GENDIR)
+
+api-docs: ## API reference (docs/api.md) <- api types (generated; do not hand-edit)
+	$(CRD_REF_DOCS) --source-path=./api/v1alpha1 --config=hack/crd-ref-docs.yaml --renderer=markdown --output-path=docs/api.md
 
 fmt:
 	gofmt -w api cmd internal
