@@ -263,7 +263,7 @@ func (r *Reconciler) ensureBackend(ctx context.Context, heg *egressv1alpha1.Hetz
 	if err := controllerutil.SetControllerReference(heg, obj, r.Scheme); err != nil {
 		return err
 	}
-	return r.Patch(ctx, obj, client.Apply,
+	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj),
 		client.FieldOwner("hcloud-egress-gateway-controller"), client.ForceOwnership)
 }
 
