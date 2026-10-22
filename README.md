@@ -83,11 +83,14 @@ pre-allow-listed addresses instead with `spec.floatingIPs`.
 
 Only the egress redirect is CNI-specific; the floating-IP lifecycle, node assignment, interface and
 labels are not. It is a pluggable backend
-([ADR-0002](docs/decisions/0002-cilium-default-host-routing-fallback.md)): `cilium` (default) renders a
-`CiliumEgressGatewayPolicy` and lets Cilium spread endpoints and SNAT via `interface` mode on `egr0`;
-`host-routing` programs policy routing and `nft` SNAT in the agent itself, for any CNI. Cilium's OSS
-egress gateway is **not topology-aware**, so a pod may egress through another region's gateway — which
-is why every address is allow-listed ([operations](docs/operations.md#regions-and-locality)).
+([ADR-0002](docs/decisions/0002-cilium-default-host-routing-fallback.md)): `cilium` (default) renders
+one `CiliumEgressGatewayPolicy` with a gateway per floating IP, in `egressIP` mode, and lets Cilium do
+the redirect and SNAT, spread the pods across the floating IPs and fail over between them
+([ADR-0009](docs/decisions/0009-cilium-egressip-not-interface.md) says why `egressIP`, not `interface`
+on the `egr0` dummy); `host-routing` programs policy routing and `nft` SNAT in the agent itself, for any
+CNI. Cilium's OSS egress gateway is **not topology-aware**, so a pod may leave through any of the CR's
+floating IPs, whatever its region — which is why every address is allow-listed
+([operations](docs/operations.md#regions-and-locality)).
 
 ## Development
 
@@ -95,14 +98,18 @@ is why every address is allow-listed ([operations](docs/operations.md#regions-an
 make test                        # unit tests (fake client + fake hcloud)
 make lint vet helm-lint
 make generate manifests api-docs # after changing api/ or the +kubebuilder markers
+make e2e-up e2e e2e-down CILIUM_VERSION=1.20.3   # datapath e2e on kind (docker, kind, helm)
 ```
 
 Tools are pinned in the `Makefile`. `make manifests` generates the CRD and the ClusterRole into the
 chart's `templates/`, and `make api-docs` the [API reference](docs/api.md), all from the Go source;
 never edit those by hand, CI fails on drift ([ADR-0008](docs/decisions/0008-generate-crd-rbac-api-reference.md)).
 pre-commit hooks (`pre-commit install`) run the generated-files check, helm lint and the
-one-manifest-per-file rule. The agent's netlink path and the real Hetzner client run only on a cluster,
-not in CI.
+one-manifest-per-file rule. The datapath e2e runs the rendered policy against a real Cilium on kind,
+for every supported minor and the next pre-release, weekly as well as on changes, so a Cilium release
+that breaks the egress path is seen before the platform adopts it
+([ADR-0010](docs/decisions/0010-cilium-datapath-e2e-matrix.md)). The agent's netlink path and the real
+Hetzner client run only on a cluster, not in CI.
 
 CI builds with the newest patch release of the Go minor in `GO_VERSION`, not with the `go` directive
 of `go.mod`, which is only the minimum. govulncheck runs on every push and daily, so a vulnerability

@@ -57,7 +57,7 @@ an existing CR stays valid.
 | Component | Tested |
 |---|---|
 | Kubernetes | 1.36 |
-| Cilium (default backend) | 1.19, egress gateway enabled |
+| Cilium (default backend) | 1.18–1.20.x, egress gateway enabled; the datapath e2e runs the newest patch of each and the next pre-release weekly ([ADR-0010](decisions/0010-cilium-datapath-e2e-matrix.md)) |
 | Talos | SELinux permissive; `dummy` module built in |
 | Hetzner Cloud | floating IPs (IPv4), API token with read/write |
 
@@ -87,8 +87,8 @@ Two mutually exclusive modes:
   controller adopts them and groups them by their API-reported home location.
 
 **Whitelist every address across all regions upstream.** `status.floatingIPs[].address` lists them.
-With the `cilium` backend a pod may egress through another region's gateway (see below), so one
-address is not enough even for a single-region workload.
+With the `cilium` backend a CR's pods are spread across all of its addresses, whatever region they
+run in (see below), so one address is not enough even for a single-region workload.
 
 ### Reclaim on deletion
 
@@ -110,11 +110,21 @@ A Hetzner floating IP only assigns to a server in its **home location**, so the 
 agent StatefulSet per region, pinned to that location's nodes. List every location your workloads run
 in under `spec.managed.regions`, each with a `count`, so each has at least one fixed egress IP.
 
-**Cilium's OSS egress gateway is not topology-aware.** With one CR spanning several regions it
-distributes endpoints to gateway nodes by hash, not by locality, so a pod in `nbg1` may egress through
-the `fsn1` gateway's IP. This is why every address must be allow-listed, not just the local one. For
-guaranteed same-region egress, use one CR per region with a region-scoped `podSelector` and
-region-affine workloads.
+**Cilium's OSS egress gateway is not topology-aware.** The policy lists every floating IP as a gateway,
+and Cilium assigns each selected pod to one of them by a hash of its endpoint, so a pod in `hel1` may
+egress through the `nbg1` address ([ADR-0009](decisions/0009-cilium-egressip-not-interface.md)). This is
+why every address must be allow-listed. For guaranteed same-region egress, use one CR per region with a
+region-scoped `podSelector` and region-affine workloads.
+
+**Failover is Cilium's.** When a gateway node goes away, its labels leave the node — the agent removes
+them on shutdown, and the controller as soon as the node stops being `Ready` (an unreachable node turns
+`Unknown` once the node-monitor grace period passes, under a minute by default) or has no agent pod
+left — and Cilium moves that gateway's pods to the remaining ones within seconds. Any change to the set
+of live gateways re-hashes the pods, so some whose gateway did not fail move too, and **their open
+egress connections break** (cilium/cilium#39245); new connections work at once. The floating IP itself
+moves only when its agent pod is rescheduled: at once for a drained node, and for a dead one when its
+Node object is removed (Cluster API remediation); the agent then claims it on another node of its region
+and the gateway rejoins.
 
 ## Opting a workload in
 
@@ -125,9 +135,12 @@ reports a floating IP, the other its node's address.
 
 ## Backends
 
-- **`cilium`** (default): the controller renders a `CiliumEgressGatewayPolicy`; Cilium does the
-  redirect and SNAT via `interface` mode on `egr0`, and distributes source endpoints across the
-  gateway nodes.
+- **`cilium`** (default): the controller renders a `CiliumEgressGatewayPolicy` with one gateway per
+  floating IP, in `egressIP` mode, each pinned to the node that owns its address; Cilium does the
+  redirect and SNAT, spreads the pods across the gateways and fails over between them, and the datapath
+  routes out the node's real uplink via a per-packet FIB lookup
+  ([ADR-0009](decisions/0009-cilium-egressip-not-interface.md)). On Cilium 1.20.x the policy must stay a
+  single address family (IPv4 here); the controller keeps it so.
 - **`host-routing`**: the agent programs policy routing and an `nft` SNAT rule itself, in the node's
   host netns. No CNI feature required; no cross-node spreading beyond what the routing provides.
   See [ADR-0002](decisions/0002-cilium-default-host-routing-fallback.md).

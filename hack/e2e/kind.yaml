@@ -1,0 +1,15 @@
+# kind cluster for the Cilium datapath e2e (hack/e2e/up.sh). No default CNI and no kube-proxy:
+# Cilium replaces both, as the egress gateway requires kubeProxyReplacement and BPF masquerade.
+# IPv4 only, like the platform (the floating IPs and the policy are IPv4).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  ipFamily: ipv4
+  disableDefaultCNI: true
+  kubeProxyMode: none
+nodes:
+  - role: control-plane
+  # The three workers stand in for the gateway nodes, one floating IP each.
+  - role: worker
+  - role: worker
+  - role: worker

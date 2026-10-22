@@ -111,6 +111,13 @@ func (c *config) assertOnce(ctx context.Context, l logr, k8s kubernetes.Interfac
 			return fmt.Errorf("host-routing: %w", err)
 		}
 	}
+	// The controller drops the labels of a node that is not Ready so the policy fails
+	// over; setting them again here would undo that every 30 s and re-hash the pods on
+	// each flip. Leave them off until the node is Ready.
+	if !names.NodeReady(node) {
+		l.Info("node not Ready, leaving it out of the egress gateways")
+		return c.unlabelNode(ctx, k8s)
+	}
 	if err := c.labelNode(ctx, k8s); err != nil {
 		return fmt.Errorf("label node: %w", err)
 	}
@@ -189,17 +196,22 @@ func (c *config) labelNode(ctx context.Context, k8s kubernetes.Interface) error 
 	return err
 }
 
-// cleanup runs on graceful shutdown: drop the node labels and tear the interface down
-// (best-effort; the controller GC covers ungraceful node loss).
-func (c *config) cleanup(l logr, k8s kubernetes.Interface) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+func (c *config) unlabelNode(ctx context.Context, k8s kubernetes.Interface) error {
 	patch := map[string]interface{}{"metadata": map[string]interface{}{"labels": map[string]interface{}{
 		names.NodeLabelKey:       nil,
 		names.FloatingIPLabelKey: nil,
 	}}}
 	b, _ := json.Marshal(patch)
-	if _, err := k8s.CoreV1().Nodes().Patch(ctx, c.nodeName, types.MergePatchType, b, metav1.PatchOptions{}); err != nil {
+	_, err := k8s.CoreV1().Nodes().Patch(ctx, c.nodeName, types.MergePatchType, b, metav1.PatchOptions{})
+	return err
+}
+
+// cleanup runs on graceful shutdown: drop the node labels and tear the interface down
+// (best-effort; the controller GC covers ungraceful node loss).
+func (c *config) cleanup(l logr, k8s kubernetes.Interface) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.unlabelNode(ctx, k8s); err != nil {
 		l.Info("cleanup: unlabel node failed", "err", err.Error())
 	}
 	if link, err := netlink.LinkByName(c.iface); err == nil {

@@ -244,27 +244,45 @@ func TestFinalizeHonorsReclaimPolicy(t *testing.T) {
 
 func TestGCAndStatusDropsStaleNodeLabelsAndReports(t *testing.T) {
 	heg := &egressv1alpha1.HetznerEgressGateway{ObjectMeta: metav1.ObjectMeta{Name: "gw"}}
-	nodeLabels := func(ip string) map[string]string {
-		return map[string]string{names.NodeLabelKey: "gw", names.FloatingIPLabelKey: ip}
+	gatewayNode := func(name, ip string, ready corev1.ConditionStatus) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{
+				names.NodeLabelKey: "gw", names.FloatingIPLabelKey: ip,
+			}},
+			Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: ready}}},
+		}
 	}
-	nodeA := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Labels: nodeLabels("203.0.113.1")}}
-	nodeB := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-b", Labels: nodeLabels("203.0.113.2")}}
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "egress-agent-gw-nbg1-0", Namespace: "egress-system", Labels: map[string]string{crLabelKey: "gw"}},
-		Spec:       corev1.PodSpec{NodeName: "node-a"},
+	agentPod := func(name, node string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "egress-system", Labels: map[string]string{crLabelKey: "gw"}},
+			Spec:       corev1.PodSpec{NodeName: node},
+		}
 	}
-	r := newTestReconciler(newFakeHCloud(), heg, nodeA, nodeB, pod)
+	r := newTestReconciler(newFakeHCloud(), heg,
+		gatewayNode("node-a", "203.0.113.1", corev1.ConditionTrue),
+		gatewayNode("node-b", "203.0.113.2", corev1.ConditionTrue),
+		gatewayNode("node-c", "203.0.113.3", corev1.ConditionUnknown),
+		agentPod("egress-agent-gw-nbg1-0", "node-a"),
+		agentPod("egress-agent-gw-fsn1-0", "node-c"),
+	)
 	ctx := context.Background()
 
 	if err := r.gcAndStatus(ctx, heg); err != nil {
 		t.Fatal(err)
 	}
 
-	// node-b has no agent pod → its gateway labels are GC'd.
-	var b corev1.Node
-	_ = r.Get(ctx, client.ObjectKey{Name: "node-b"}, &b)
-	if _, ok := b.Labels[names.NodeLabelKey]; ok {
-		t.Fatal("stale gateway label on node-b was not dropped")
+	// node-b has no agent pod (recycled), and node-c is not Ready although its agent pod is
+	// still bound to it (a dead node): both lose their gateway labels so the policy fails
+	// over to node-a.
+	for _, name := range []string{"node-b", "node-c"} {
+		var n corev1.Node
+		_ = r.Get(ctx, client.ObjectKey{Name: name}, &n)
+		if _, ok := n.Labels[names.NodeLabelKey]; ok {
+			t.Fatalf("gateway label on %s was not dropped", name)
+		}
+		if _, ok := n.Labels[names.FloatingIPLabelKey]; ok {
+			t.Fatalf("floating-ip label on %s was not dropped", name)
+		}
 	}
 	// node-a keeps its labels and is reported.
 	if heg.Status.ReadyGateways != 1 {

@@ -33,8 +33,9 @@ const (
 type EgressBackend string
 
 const (
-	// BackendCilium renders a CiliumEgressGatewayPolicy. Requires Cilium with
-	// egress gateway enabled; provides multi-gateway HA + per-endpoint spreading.
+	// BackendCilium renders a CiliumEgressGatewayPolicy with one gateway per floating
+	// IP. Requires Cilium >= 1.18 with egress gateway enabled; Cilium spreads the pods
+	// across the gateways and fails over between them.
 	BackendCilium EgressBackend = "cilium"
 	// BackendHostRouting is CNI-independent: the agent programs policy routing +
 	// SNAT (nftables) in the node's host netns itself. Works on any CNI that permits
@@ -52,8 +53,8 @@ type ManagedRegion struct {
 	Location string `json:"location"`
 
 	// Count is the number of floating IPs to provision in this location (= gateway
-	// nodes traffic spreads across within the region). Keep it small and stable:
-	// every address must be whitelisted at the upstream provider.
+	// nodes in the region). Keep it small and stable: every address must be
+	// whitelisted at the upstream provider.
 	// +kubebuilder:validation:Minimum=1
 	Count int `json:"count"`
 }
@@ -64,11 +65,10 @@ type ManagedRegion struct {
 type ManagedFloatingIPs struct {
 	// Regions is the set of Hetzner locations across which floating IPs are
 	// provisioned. Spread them across the locations where your workloads run so each
-	// region has a fixed egress IP and cross-region egress hops are avoided. NOTE:
-	// Cilium's OSS egress gateway is not topology-aware — a single gateway spanning
-	// regions distributes endpoints to gateway nodes by hash, not by locality; for
-	// guaranteed same-region egress use one CR per region with a region-scoped
-	// podSelector (and region-affine workloads).
+	// region has a fixed egress IP. NOTE: Cilium's OSS egress gateway is not
+	// topology-aware — the CR's pods are spread across all of its floating IPs, whatever
+	// their region, so allow-list every address; for guaranteed same-region egress use
+	// one CR per region with a region-scoped podSelector (and region-affine workloads).
 	// +kubebuilder:validation:MinItems=1
 	Regions []ManagedRegion `json:"regions"`
 
@@ -117,9 +117,9 @@ type HetznerEgressGatewaySpec struct {
 	ExcludedCIDRs []string `json:"excludedCIDRs,omitempty"`
 
 	// EgressInterface is the name of the dummy interface the agent creates on each
-	// gateway node to hold that node's floating IP; the egress backend SNATs to this
-	// interface's address, so N gateway nodes each SNAT to their own floating IP and
-	// traffic spreads across them.
+	// gateway node to hold that node's floating IP as a local address, so each gateway
+	// node can SNAT to its own floating IP. Traffic never leaves through it: the cilium
+	// backend routes out the node's uplink.
 	// +kubebuilder:default=egr0
 	// +optional
 	EgressInterface string `json:"egressInterface,omitempty"`

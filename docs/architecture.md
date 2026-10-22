@@ -68,13 +68,17 @@ watches Nodes and maps a labelled node back to its CR), when an owned StatefulSe
 4. **Ensure the backend object.** The selected backend renders the egress redirect
    ([ADR-0002](decisions/0002-cilium-default-host-routing-fallback.md)). `cilium` server-side-applies
    a `CiliumEgressGatewayPolicy` selecting `spec.podSelector`, with `destinationCIDRs` defaulting to
-   `0.0.0.0/0` minus the cluster-internal ranges, and an `egressGateway.nodeSelector` matching the
-   node label the agents set. `host-routing` renders nothing cluster-level; its data plane is entirely
-   in the agent.
+   `0.0.0.0/0` minus the cluster-internal (IPv4) ranges, and one `egressGateways` entry per floating IP
+   in `egressIP` mode, each `nodeSelector` pinned to the node that owns its address
+   ([ADR-0009](decisions/0009-cilium-egressip-not-interface.md)). Cilium spreads the pods across the
+   entries whose node exists and fails over between them. `host-routing` renders nothing
+   cluster-level; its data plane is entirely in the agent.
 5. **GC node labels and publish status.** Every node labelled `egress.maarlab.dev/gateway=<cr>` is
-   checked against the agent pods actually running: a labelled node with no agent pod was recycled
-   without graceful cleanup, so its stale `gateway` and `floating-ip` labels are removed. The
-   survivors become `status.floatingIPs[]` (`address` from the node's `floating-ip` label,
+   checked against the agent pods actually running and its `Ready` condition: a labelled node with no
+   agent pod was recycled without graceful cleanup, and a node that is not `Ready` is dead or
+   unreachable — its agent pod stays bound to it in the API until the Node object goes — so in both
+   cases its `gateway` and `floating-ip` labels are removed, and the policy's other gateways take its
+   pods. The survivors become `status.floatingIPs[]` (`address` from the node's `floating-ip` label,
    `assignedNode`), and `status.readyGateways` their count.
 6. **Requeue after 60 s.**
 
@@ -95,7 +99,9 @@ seconds** (self-heal), and makes the node's state true and idempotent:
    ([ADR-0004](decisions/0004-never-raise-conf-all-rp-filter.md)).
 4. For the `host-routing` backend only, program policy routing + an `nft` SNAT rule to the floating IP
    on the node's default-route uplink.
-5. **Label the node** `egress.maarlab.dev/gateway=<cr>` and `egress.maarlab.dev/floating-ip=<addr>`.
+5. **Label the node** `egress.maarlab.dev/gateway=<cr>` and `egress.maarlab.dev/floating-ip=<addr>` —
+   only while the node is `Ready`; otherwise remove the labels, so the agent agrees with the
+   controller's GC instead of re-adding what it removed every 30 s.
 
 On `SIGTERM` the agent removes the two node labels and deletes `egr0` (best-effort); ungraceful node
 loss is covered by the controller's label GC in step 5 above.
@@ -125,9 +131,13 @@ node that vanished.
 - **Unit tests** run the reconciler against a fake Kubernetes client and a fake Hetzner client:
   managed create/adopt, BYO grouping by location, per-region StatefulSets and their GC, the backend
   renderers, finalizer reclaim, and naming.
+- **The datapath e2e** ([ADR-0010](decisions/0010-cilium-datapath-e2e-matrix.md)) runs the rendered
+  policy against a real Cilium on kind, with simulated gateway nodes and an upstream outside the
+  cluster, and asserts the source IPs the upstream sees: unlabelled pods from their node, labelled pods
+  spread across every floating IP, and failover when a gateway goes away. It runs on every supported
+  Cilium minor and the next pre-release, weekly as well as on changes.
 - **Not covered automatically**: the agent's netlink path (`egr0`, addresses, `nft`) and the real
   Hetzner API client run only on a real node against the real API; they are exercised by deploying,
-  not in CI. The datapath interaction with the CNI — the one that
-  [ADR-0004](decisions/0004-never-raise-conf-all-rp-filter.md) is about — can only be seen on a
-  cluster running the CNI, so the first deploy to a new CNI or Cilium version is the test the suite
-  cannot replace.
+  not in CI (the e2e sets up `egr0` from the shell). Interactions with the rest of a production node —
+  the one [ADR-0004](decisions/0004-never-raise-conf-all-rp-filter.md) is about — and any CNI other
+  than Cilium are still only seen on a real cluster.

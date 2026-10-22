@@ -35,7 +35,7 @@ _Appears in:_
 
 | Field | Description |
 | --- | --- |
-| `cilium` | BackendCilium renders a CiliumEgressGatewayPolicy. Requires Cilium with<br />egress gateway enabled; provides multi-gateway HA + per-endpoint spreading.<br /> |
+| `cilium` | BackendCilium renders a CiliumEgressGatewayPolicy with one gateway per floating<br />IP. Requires Cilium >= 1.18 with egress gateway enabled; Cilium spreads the pods<br />across the gateways and fails over between them.<br /> |
 | `host-routing` | BackendHostRouting is CNI-independent: the agent programs policy routing +<br />SNAT (nftables) in the node's host netns itself. Works on any CNI that permits<br />host-level SNAT, at the cost of the HA/spreading niceties a CNI egress gateway<br />gives for free.<br /> |
 
 
@@ -113,7 +113,7 @@ _Appears in:_
 | `podSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.37/#labelselector-v1-meta)_ | PodSelector selects the pods whose egress must use the fixed source IPs.<br />Services opt in by carrying these labels — no node pinning. |  |  |
 | `destinationCIDRs` _string array_ | DestinationCIDRs restricts which destinations are routed through the gateway.<br />Empty => 0.0.0.0/0 (any destination), with the cluster-internal ranges added<br />to ExcludedCIDRs automatically so in-cluster traffic is never redirected. |  | Optional: \{\} <br /> |
 | `excludedCIDRs` _string array_ | ExcludedCIDRs are destinations NOT routed through the gateway (extra to the<br />cluster-internal ranges the controller always excludes). |  | Optional: \{\} <br /> |
-| `egressInterface` _string_ | EgressInterface is the name of the dummy interface the agent creates on each<br />gateway node to hold that node's floating IP; the egress backend SNATs to this<br />interface's address, so N gateway nodes each SNAT to their own floating IP and<br />traffic spreads across them. | egr0 | Optional: \{\} <br /> |
+| `egressInterface` _string_ | EgressInterface is the name of the dummy interface the agent creates on each<br />gateway node to hold that node's floating IP as a local address, so each gateway<br />node can SNAT to its own floating IP. Traffic never leaves through it: the cilium<br />backend routes out the node's uplink. | egr0 | Optional: \{\} <br /> |
 | `backend` _[EgressBackend](#egressbackend)_ | Backend programs the egress redirect. Defaults to cilium. | cilium | Enum: [cilium host-routing] <br />Optional: \{\} <br /> |
 
 
@@ -134,7 +134,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `regions` _[ManagedRegion](#managedregion) array_ | Regions is the set of Hetzner locations across which floating IPs are<br />provisioned. Spread them across the locations where your workloads run so each<br />region has a fixed egress IP and cross-region egress hops are avoided. NOTE:<br />Cilium's OSS egress gateway is not topology-aware — a single gateway spanning<br />regions distributes endpoints to gateway nodes by hash, not by locality; for<br />guaranteed same-region egress use one CR per region with a region-scoped<br />podSelector (and region-affine workloads). |  | MinItems: 1 <br /> |
+| `regions` _[ManagedRegion](#managedregion) array_ | Regions is the set of Hetzner locations across which floating IPs are<br />provisioned. Spread them across the locations where your workloads run so each<br />region has a fixed egress IP. NOTE: Cilium's OSS egress gateway is not<br />topology-aware — the CR's pods are spread across all of its floating IPs, whatever<br />their region, so allow-list every address; for guaranteed same-region egress use<br />one CR per region with a region-scoped podSelector (and region-affine workloads). |  | MinItems: 1 <br /> |
 | `type` _string_ | Type of floating IP. Defaults to ipv4. | ipv4 | Enum: [ipv4 ipv6] <br />Optional: \{\} <br /> |
 | `reclaimPolicy` _[ReclaimPolicy](#reclaimpolicy)_ | ReclaimPolicy on CR deletion. Defaults to Retain (protects the whitelisted addresses). | Retain | Enum: [Retain Delete] <br />Optional: \{\} <br /> |
 | `labels` _object (keys:string, values:string)_ | Labels are extra Hetzner labels stamped on the created floating IPs (the<br />controller always adds its own managed-by/gateway/index labels for adoption). |  | Optional: \{\} <br /> |
@@ -156,7 +156,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `location` _string_ | Location is the Hetzner location, e.g. "nbg1", "fsn1", "hel1". |  | MinLength: 1 <br /> |
-| `count` _integer_ | Count is the number of floating IPs to provision in this location (= gateway<br />nodes traffic spreads across within the region). Keep it small and stable:<br />every address must be whitelisted at the upstream provider. |  | Minimum: 1 <br /> |
+| `count` _integer_ | Count is the number of floating IPs to provision in this location (= gateway<br />nodes in the region). Keep it small and stable: every address must be<br />whitelisted at the upstream provider. |  | Minimum: 1 <br /> |
 
 
 #### ReclaimPolicy

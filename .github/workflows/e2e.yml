@@ -1,0 +1,84 @@
+name: e2e
+
+# The Cilium datapath e2e (ADR-0010): the controller's policy against a real Cilium on kind,
+# for every supported Cilium minor and the next pre-release. Weekly as well as on changes,
+# because what breaks it is usually a Cilium release, not a commit here: the scheduled run
+# picks up a new patch or pre-release on its own and opens an issue when one fails.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.27" # keep in step with ci.yml
+  KIND_VERSION: v0.33.0
+
+jobs:
+  versions:
+    name: resolve Cilium versions
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          matrix="$(./hack/e2e/cilium-versions.sh)"
+          echo "$matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    name: Cilium ${{ matrix.version }}
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A pre-release failing is the warning this workflow exists for, not a red build.
+    continue-on-error: ${{ matrix.experimental }}
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.versions.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+          cache: true
+      - name: install kind
+        run: go install sigs.k8s.io/kind@${KIND_VERSION} && echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: bring up kind + Cilium ${{ matrix.version }}
+        run: |
+          sudo modprobe dummy
+          CILIUM_VERSION=${{ matrix.version }} ./hack/e2e/up.sh
+      - name: e2e
+        run: go test -tags e2e -count=1 -v ./test/e2e/
+      - name: dump Cilium state
+        if: failure()
+        run: |
+          kubectl get ciliumegressgatewaypolicy -o yaml || true
+          for pod in $(kubectl -n kube-system get pod -l k8s-app=cilium -o name); do
+            echo "== $pod"
+            kubectl -n kube-system exec "$pod" -c cilium-agent -- cilium-dbg bpf egress list || true
+          done
+      - name: open an issue
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "e2e: egress breaks on Cilium ${{ matrix.version }}"
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[].number')" ]; then
+            gh issue create --title "$TITLE" --body "The scheduled datapath e2e failed against Cilium ${{ matrix.version }}: $RUN. See ADR-0010."
+          fi

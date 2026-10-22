@@ -41,11 +41,22 @@ The labelled pod still egresses from its node's IP (check with an IP echo servic
 
 - **The pod does not match `spec.podSelector`.** Compare the pod's labels with the selector; opt-in is
   by label only.
-- **`cilium` backend, policy not programmed.** `kubectl get ciliumegressgatewaypolicy <cr>` should
-  exist and its `egressGateway.nodeSelector` match the labelled gateway nodes. Confirm Cilium has
-  `egressGateway.enabled: true`.
+- **`cilium` backend, policy not programmed.** There is one `CiliumEgressGatewayPolicy` named after the
+  CR; `kubectl get ciliumegressgatewaypolicy <cr>` should exist with one `egressGateways` entry per
+  floating IP, each `egressIP` an address and its `nodeSelector` matching the single node that owns it.
+  Confirm Cilium has `egressGateway.enabled: true` and is ≥ 1.18 (older versions drop `egressGateways`).
 - **The destination is excluded.** Cluster-internal ranges are always excluded; if you set
   `spec.destinationCIDRs`, traffic outside them is not redirected.
+- **SYN leaves the gateway node and nothing returns, no `No Egress IP configured` drop.** On the gateway
+  node, `cilium-dbg bpf egress list` shows the right `Egress IP` but an `Egress Ifindex` pointing at
+  `egr0`. That is Cilium's `interface` mode forwarding egress traffic *into* the dummy `egr0`, a black
+  hole — it broke on Cilium 1.20 ([ADR-0009](decisions/0009-cilium-egressip-not-interface.md)). The fix
+  is in the controller (≥ v0.2.7), which renders the gateways in `egressIP` mode (the datapath then does
+  a per-packet FIB lookup out the real uplink), so each gateway has an `egressIP` and none an `interface`.
+- **Gateway BPF map shows `Egress IP 0.0.0.0` on the elected node.** A Cilium 1.20 regression
+  (cilium/cilium#48660) black-holes an IPv4 egressIP policy if any `destinationCIDRs`/`excludedCIDRs`
+  entry is IPv6. The controller keeps the policy IPv4-only; if you set `spec.destinationCIDRs` or
+  `spec.excludedCIDRs` by hand, keep them IPv4-only too on Cilium 1.20.x.
 
 ## Pods on a gateway node lose all cluster connectivity
 
@@ -68,18 +79,19 @@ since the agent does not lower it.
 
 The egress is working (the IP echo shows a floating IP) but a filtered upstream refuses it.
 
-- **Not every address is allow-listed.** With the `cilium` backend a pod egresses through *any*
-  region's gateway by hash, not the local one ([operations](operations.md#regions-and-locality)).
-  Allow-list every address in `status.floatingIPs[]`, not just one.
+- **Not every address is allow-listed.** With the `cilium` backend the CR's pods are spread across all
+  of its floating IPs, and a pod's address can change whenever a gateway fails or returns
+  ([operations](operations.md#regions-and-locality)). Allow-list every address in
+  `status.floatingIPs[]`, not just one.
 - **The address changed.** Managed IPs are stable and re-adopted by label, so this only happens if the
   CR was deleted with `reclaimPolicy: Delete` and recreated, minting new addresses. Use `Retain`.
 
 ## A node kept its gateway labels after being drained
 
-A node labelled `egress.maarlab.dev/gateway=<cr>` with no agent pod on it is cleaned up by the
-controller on its next pass (it removes the `gateway` and `floating-ip` labels). If it lingers, the
-controller is not reconciling — check the controller pod is `Running` and is the leader, and
-[force a reconcile](#forcing-a-reconcile).
+A node labelled `egress.maarlab.dev/gateway=<cr>` with no agent pod on it, or that is not `Ready`, is
+cleaned up by the controller on its next pass (it removes the `gateway` and `floating-ip` labels), and
+Cilium moves that gateway's pods to the others. If it lingers, the controller is not reconciling —
+check the controller pod is `Running` and is the leader, and [force a reconcile](#forcing-a-reconcile).
 
 ## Forcing a reconcile
 

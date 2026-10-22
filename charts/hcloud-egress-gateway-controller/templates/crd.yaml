@@ -5,7 +5,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.5
+    controller-gen.kubebuilder.io/version: v0.23.0
   name: hetzneregressgateways.egress.maarlab.dev
 spec:
   group: egress.maarlab.dev
@@ -72,9 +72,9 @@ spec:
                 default: egr0
                 description: |-
                   EgressInterface is the name of the dummy interface the agent creates on each
-                  gateway node to hold that node's floating IP; the egress backend SNATs to this
-                  interface's address, so N gateway nodes each SNAT to their own floating IP and
-                  traffic spreads across them.
+                  gateway node to hold that node's floating IP as a local address, so each gateway
+                  node can SNAT to its own floating IP. Traffic never leaves through it: the cilium
+                  backend routes out the node's uplink.
                 type: string
               excludedCIDRs:
                 description: |-
@@ -114,11 +114,10 @@ spec:
                     description: |-
                       Regions is the set of Hetzner locations across which floating IPs are
                       provisioned. Spread them across the locations where your workloads run so each
-                      region has a fixed egress IP and cross-region egress hops are avoided. NOTE:
-                      Cilium's OSS egress gateway is not topology-aware — a single gateway spanning
-                      regions distributes endpoints to gateway nodes by hash, not by locality; for
-                      guaranteed same-region egress use one CR per region with a region-scoped
-                      podSelector (and region-affine workloads).
+                      region has a fixed egress IP. NOTE: Cilium's OSS egress gateway is not
+                      topology-aware — the CR's pods are spread across all of its floating IPs, whatever
+                      their region, so allow-list every address; for guaranteed same-region egress use
+                      one CR per region with a region-scoped podSelector (and region-affine workloads).
                     items:
                       description: |-
                         ManagedRegion asks for a number of floating IPs in one Hetzner location. A floating
@@ -128,8 +127,8 @@ spec:
                         count:
                           description: |-
                             Count is the number of floating IPs to provision in this location (= gateway
-                            nodes traffic spreads across within the region). Keep it small and stable:
-                            every address must be whitelisted at the upstream provider.
+                            nodes in the region). Keep it small and stable: every address must be
+                            whitelisted at the upstream provider.
                           minimum: 1
                           type: integer
                         location:

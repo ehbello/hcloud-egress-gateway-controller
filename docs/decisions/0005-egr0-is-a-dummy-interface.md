@@ -29,3 +29,7 @@ routing of its own.
 - `egr0` carries only the floating IP; it is a black hole for anything routed *to* it, which is fine
   because the datapath only uses it as a SNAT source, and is why its `rp_filter` is irrelevant
   ([ADR-0004](0004-never-raise-conf-all-rp-filter.md)).
+- Because `egr0` is a black hole, the cilium backend must **not** use Cilium's `interface` mode (which
+  would forward egress traffic out `egr0`); it uses `egressIP` mode, where the floating IP only needs to
+  be a local source address and the datapath routes out the real uplink
+  ([ADR-0009](0009-cilium-egressip-not-interface.md)).
